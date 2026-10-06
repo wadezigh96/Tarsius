@@ -5,31 +5,49 @@ const ROUTER = "0x10ed43c718714eb63d5aa57b78b54704e256024e";
 const WBNB = "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c";
 const EVM=/^0x[a-fA-F0-9]{40}$/;
 
-async function rpc(method:string,params:unknown[]){const r=await fetch(RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params}),cache:"no-store"});if(!r.ok)throw new Error(`RPC HTTP ${r.status}`);const j=await r.json();if(j.error)throw new Error(j.error.message||"RPC error");return j.result;}
-function word(x:string,n:number){return x.replace(/^0x/,"").slice(n*64,(n+1)*64);}
-function addr(a:string){return a.slice(2).toLowerCase().padStart(64,"0");}
-function encAddressArray(xs:string[]){return xs.map(addr).join("");}
-function encodeSwap(path:string[]){const pathOffset=(2+2)*32;const data="38ed1739"+
-  "0".repeat(64)+"0".repeat(64)+"0".repeat(64)+"0".repeat(64)+
-  "0".repeat(64)+
-  (pathOffset/1).toString(16).padStart(64,"0")+
-  "0".repeat(64)+
-  path.length.toString(16).padStart(64,"0")+encAddressArray(path)+
-  "0".repeat(64);
- return "0x"+data;}
+async function rpc(method:string,params:unknown[]){
+  const r=await fetch(RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params}),cache:"no-store"});
+  if(!r.ok) throw new Error(`RPC HTTP ${r.status}`);
+  const j=await r.json();
+  if(j.error) throw new Error(j.error.message||"RPC error");
+  return j.result;
+}
+const word=(v:bigint)=>v.toString(16).padStart(64,"0");
+const addr=(a:string)=>a.slice(2).toLowerCase().padStart(64,"0");
+const call=(selector:string,...words:string[])=>"0x"+selector+words.join("");
+function balanceOf(a:string){return call("70a08231",addr(a));}
+function allowance(owner:string,spender:string){return call("dd62ed3e",addr(owner),addr(spender));}
+function sellCalldata(amount:bigint,token:string,to:string,deadline:bigint){
+  return call("38ed1739",word(amount),word(0n),word(160n),addr(to),word(deadline),word(2n),addr(token),addr(WBNB));
+}
+function buyCalldata(token:string,to:string,deadline:bigint){
+  return call("7ff36ab5",word(0n),word(0n),word(96n),addr(to),word(deadline),word(2n),addr(WBNB),addr(token));
+}
 export async function GET(req:Request){
- const token=new URL(req.url).searchParams.get("address")||"";
- if(!EVM.test(token)) return NextResponse.json({valid:false,error:"BSC token address required"},{status:400});
- try{
-   const buyPath=[WBNB,token], sellPath=[token,WBNB];
-   const buyData=encodeSwap(buyPath), sellData=encodeSwap(sellPath);
-   const probeFrom="0x0000000000000000000000000000000000000001";
-   const amount=1000000000000000n;
-   const tx=(data:string)=>({from:probeFrom,to:ROUTER,data,value:"0x"+amount.toString(16)});
-   const results=await Promise.all([buyData,sellData].map(async data=>{
-     try{const gas=await rpc("eth_estimateGas",[tx(data),"latest"]);return {ok:true,gas};}
-     catch(e){return {ok:false,error:e instanceof Error?e.message:"simulation reverted"};}
-   }));
-   return NextResponse.json({valid:true,chain:"bsc",mode:"STATEFUL_ESTIMATE_GAS_PROBE",buy:results[0],sell:results[1],probe:"synthetic address; no signing/broadcast",warning:"This is a heuristic. It does not provide token balance/allowance, so a successful estimate is not proof of sellability.",timestamp:Date.now()},{headers:{"Cache-Control":"no-store"}});
- }catch(e){return NextResponse.json({valid:false,error:e instanceof Error?e.message:"Simulation unavailable"},{status:502});}
+  const q=new URL(req.url).searchParams;
+  const token=q.get("address")||"";
+  const wallet=q.get("wallet")||"";
+  if(!EVM.test(token)) return NextResponse.json({valid:false,error:"BSC token address required"},{status:400});
+  if(wallet && !EVM.test(wallet)) return NextResponse.json({valid:false,error:"wallet must be a valid EVM address"},{status:400});
+  try{
+    const block=await rpc("eth_getBlockByNumber",["latest",false]) as {timestamp:string};
+    const deadline=BigInt(block.timestamp)+300n;
+    const base={valid:true,chain:"bsc",mode:wallet?"STATEFUL_WALLET_CONTEXT":"QUOTE_ONLY",broadcast:false,warning:"Read-only simulation only. No approval, signing, or broadcast is performed."};
+    if(!wallet) return NextResponse.json({...base,status:"WALLET_REQUIRED_FOR_SELL_SIMULATION",buy:{status:"NOT_TESTED"},sell:{status:"NOT_TESTED"}},{headers:{"Cache-Control":"no-store"}});
+    const [balanceHex,allowanceHex]=await Promise.all([
+      rpc("eth_call",[{to:token,data:balanceOf(wallet)},"latest"]),
+      rpc("eth_call",[{to:token,data:allowance(wallet,ROUTER)},"latest"])
+    ]);
+    const balance=BigInt(balanceHex||"0x0"), approved=BigInt(allowanceHex||"0x0");
+    const amount=balance/100n;
+    const sell= amount>0n && approved>=amount;
+    if(!sell) return NextResponse.json({...base,status:amount===0n?"MISSING_TOKEN_BALANCE":"MISSING_ALLOWANCE",wallet,balance:balance.toString(),allowance:approved.toString(),sell:{status:amount===0n?"MISSING_TOKEN_BALANCE":"MISSING_ALLOWANCE",testAmount:amount.toString()}},{headers:{"Cache-Control":"no-store"}});
+    try{
+      const data=sellCalldata(amount,token,wallet,deadline);
+      const gas=await rpc("eth_estimateGas",[{from:wallet,to:ROUTER,data},"latest"]);
+      return NextResponse.json({...base,status:"SELL_CALL_OK",wallet,balance:balance.toString(),allowance:approved.toString(),sell:{status:"PASS",testAmount:amount.toString(),gas}},{headers:{"Cache-Control":"no-store"}});
+    }catch(e){
+      return NextResponse.json({...base,status:"SELL_CALL_REVERT",wallet,balance:balance.toString(),allowance:approved.toString(),sell:{status:"REVERT",testAmount:amount.toString(),error:e instanceof Error?e.message:"simulation reverted"}},{headers:{"Cache-Control":"no-store"}});
+    }
+  }catch(e){return NextResponse.json({valid:false,error:e instanceof Error?e.message:"Simulation unavailable"},{status:502});}
 }
