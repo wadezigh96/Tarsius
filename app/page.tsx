@@ -33,6 +33,7 @@ export default function Home() {
   const [scanLoading, setScanLoading] = useState(false);
   const [paper, setPaper] = useState<any>({ candidates: [] });
   const [simulation, setSimulation] = useState<any>(null);
+  const [stateful, setStateful] = useState<any>(null);
 
   const status = useMemo(
     () => mode === "AUTO" ? "AUTO • POLICY ACTIVE" : mode === "ASSISTED" ? "ASSISTED • CONFIRM" : "PAPER • NO FUNDS",
@@ -81,7 +82,8 @@ export default function Home() {
       setLiquidity(liq);
       if (data.chain === "bsc" && data.valid) {
         fetch(`/api/onchain/simulation?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" }).then(r=>r.json()).then(setSimulation).catch(()=>setSimulation(null));
-      } else setSimulation(null);
+        fetch(`/api/onchain/stateful-simulation?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" }).then(r=>r.json()).then(setStateful).catch(()=>setStateful(null));
+      } else { setSimulation(null); setStateful(null); }
       if (!data.valid) setRisk("CRITICAL");
       else if (liq.valid && liq.estimatedLiquidityUsd < 25000) setRisk("HIGH");
       else if (data.chain === "solana" && (data.freezeAuthority || data.mintAuthority)) setRisk("HIGH");
@@ -149,6 +151,7 @@ export default function Home() {
           </div>)}
           {!paper.error && !(paper.candidates||[]).length && <small>No new WBNB/USDT pairs in the latest 120 blocks.</small>}
         </div>
+        <div className="paper-feed"><div className="paper-feed-head"><b>STATE PROBE</b><small>no broadcast</small></div><div className="paper-row"><span>Buy estimate</span><b>{stateful?.buy?.ok ? "PASS" : stateful?.buy ? "REVERT" : "—"}</b></div><div className="paper-row"><span>Sell estimate</span><b>{stateful?.sell?.ok ? "PASS" : stateful?.sell ? "REVERT" : "—"}</b></div><small>{stateful?.warning || "Waiting for simulation…"}</small></div>
         <button className="primary" onClick={()=>setApproval(true)}>Request action</button>
         {approval && <div className="approval"><b>Action review</b><p>{mode==="AUTO" ? "Auto mode uses your configured limits. The model still never receives private keys." : "Review the transaction before signing. The model proposes; your signer signs."}</p><button onClick={()=>setApproval(false)}>Close</button></div>}
       </div>
