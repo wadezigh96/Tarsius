@@ -28,6 +28,8 @@ export default function Home() {
   const [solAddress, setSolAddress] = useState("");
   const [bnb, setBnb] = useState<ChainState>({});
   const [sol, setSol] = useState<ChainState>({});
+  const [scanData, setScanData] = useState<any>(null);
+  const [scanLoading, setScanLoading] = useState(false);
 
   const status = useMemo(
     () => mode === "AUTO" ? "AUTO • POLICY ACTIVE" : mode === "ASSISTED" ? "ASSISTED • CONFIRM" : "PAPER • NO FUNDS",
@@ -49,8 +51,19 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [bnbAddress, solAddress]);
 
-  function scan() {
-    setRisk(token.trim() ? "HIGH" : null);
+  async function scan() {
+    if (!token.trim()) { setRisk(null); setScanData(null); return; }
+    setScanLoading(true);
+    try {
+      const r = await fetch(`/api/onchain/token?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" });
+      const data = await r.json();
+      setScanData(data);
+      if (!data.valid) setRisk("CRITICAL");
+      else if (data.chain === "solana" && (data.freezeAuthority || data.mintAuthority)) setRisk("HIGH");
+      else if (data.chain === "bsc" && data.owner) setRisk("HIGH");
+      else setRisk("LOW");
+    } catch { setRisk("CRITICAL"); setScanData({valid:false,error:"Scanner unavailable"}); }
+    finally { setScanLoading(false); }
   }
 
   return <main>
@@ -92,10 +105,10 @@ export default function Home() {
         <div className="card-head"><h2>Meme Scanner</h2><span>RISK INTELLIGENCE</span></div>
         <div className="scan">
           <input value={token} onChange={e=>setToken(e.target.value)} placeholder="Paste token address…" />
-          <button onClick={scan}>Analyze</button>
+          <button onClick={scan}>{scanLoading ? "Reading…" : "Analyze"}</button>
         </div>
-        {risk && <div className="result"><div><b>RISK: {risk}</b><p>Live contract/DEX checks are the next scanner layer. Risk indicators are not guarantees.</p></div><span className="risk">{risk}</span></div>}
-        <div className="checks">{checks.map(([a,b])=><div key={a}><span>{a}</span><small>{b}</small></div>)}</div>
+        {risk && <div className="result"><div><b>RISK: {risk}</b><p>{scanData?.error || (scanData?.chain === "solana" ? `SPL mint • ${scanData.supply ?? "unknown"} supply • top-10 concentration ${scanData.top10ConcentrationPct == null ? "—" : scanData.top10ConcentrationPct.toFixed(2)+"%"}` : `BSC token • ${scanData?.totalSupplyUi == null ? "supply read" : scanData.totalSupplyUi} total supply • owner ${scanData?.owner ? "present" : "not detected"}`)}</p></div><span className="risk">{risk}</span></div>}
+        <div className="checks">{checks.map(([a,b])=><div key={a}><span>{a}</span><small>{b}</small></div>)}{scanData?.chain === "solana" && <><div><span>Mint authority</span><small>{scanData.mintAuthority || "Disabled"}</small></div><div><span>Freeze authority</span><small>{scanData.freezeAuthority || "Disabled"}</small></div></>}{scanData?.chain === "bsc" && <div><span>Contract bytecode</span><small>{scanData.bytecode ? "Present" : "Missing"}</small></div>}</div>
       </div>
 
       <div className="card">
