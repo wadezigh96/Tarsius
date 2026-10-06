@@ -29,6 +29,7 @@ export default function Home() {
   const [bnb, setBnb] = useState<ChainState>({});
   const [sol, setSol] = useState<ChainState>({});
   const [scanData, setScanData] = useState<any>(null);
+  const [liquidity, setLiquidity] = useState<any>(null);
   const [scanLoading, setScanLoading] = useState(false);
 
   const status = useMemo(
@@ -55,10 +56,16 @@ export default function Home() {
     if (!token.trim()) { setRisk(null); setScanData(null); return; }
     setScanLoading(true);
     try {
-      const r = await fetch(`/api/onchain/token?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" });
-      const data = await r.json();
+      const [tokenResponse, liquidityResponse] = await Promise.all([
+        fetch(`/api/onchain/token?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" }),
+        fetch(`/api/onchain/liquidity?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" })
+      ]);
+      const data = await tokenResponse.json();
+      const liq = await liquidityResponse.json();
       setScanData(data);
+      setLiquidity(liq);
       if (!data.valid) setRisk("CRITICAL");
+      else if (liq.valid && liq.estimatedLiquidityUsd < 25000) setRisk("HIGH");
       else if (data.chain === "solana" && (data.freezeAuthority || data.mintAuthority)) setRisk("HIGH");
       else if (data.chain === "bsc" && data.owner) setRisk("HIGH");
       else setRisk("LOW");
@@ -107,8 +114,8 @@ export default function Home() {
           <input value={token} onChange={e=>setToken(e.target.value)} placeholder="Paste token address…" />
           <button onClick={scan}>{scanLoading ? "Reading…" : "Analyze"}</button>
         </div>
-        {risk && <div className="result"><div><b>RISK: {risk}</b><p>{scanData?.error || (scanData?.chain === "solana" ? `SPL mint • ${scanData.supply ?? "unknown"} supply • top-10 concentration ${scanData.top10ConcentrationPct == null ? "—" : scanData.top10ConcentrationPct.toFixed(2)+"%"}` : `BSC token • ${scanData?.totalSupplyUi == null ? "supply read" : scanData.totalSupplyUi} total supply • owner ${scanData?.owner ? "present" : "not detected"}`)}</p></div><span className="risk">{risk}</span></div>}
-        <div className="checks">{checks.map(([a,b])=><div key={a}><span>{a}</span><small>{b}</small></div>)}{scanData?.chain === "solana" && <><div><span>Mint authority</span><small>{scanData.mintAuthority || "Disabled"}</small></div><div><span>Freeze authority</span><small>{scanData.freezeAuthority || "Disabled"}</small></div></>}{scanData?.chain === "bsc" && <div><span>Contract bytecode</span><small>{scanData.bytecode ? "Present" : "Missing"}</small></div>}</div>
+        {risk && <div className="result"><div><b>RISK: {risk}</b><p>{scanData?.error || (liquidity?.valid ? `Liquidity ≈ ${Number(liquidity.estimatedLiquidityUsd || 0).toLocaleString(undefined,{maximumFractionDigits:0})} across detected BSC pools • ${liquidity.pools?.length || 0} pool(s)` : "No supported BSC pool detected")}</p></div><span className="risk">{risk}</span></div>}
+        <div className="checks">{checks.map(([a,b])=><div key={a}><span>{a}</span><small>{b}</small></div>)}{scanData?.chain === "solana" && <><div><span>Mint authority</span><small>{scanData.mintAuthority || "Disabled"}</small></div><div><span>Freeze authority</span><small>{scanData.freezeAuthority || "Disabled"}</small></div></>}{scanData?.chain === "bsc" && <><div><span>Contract bytecode</span><small>{scanData.bytecode ? "Present" : "Missing"}</small></div><div><span>Liquidity</span><small>{liquidity?.valid ? `${Number(liquidity.estimatedLiquidityUsd || 0).toLocaleString(undefined,{maximumFractionDigits:0})}` : "Not detected"}</small></div></>}</div>
       </div>
 
       <div className="card">
