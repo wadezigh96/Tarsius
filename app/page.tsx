@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Risk = "LOW" | "HIGH" | "CRITICAL";
 type Mode = "PAPER" | "ASSISTED" | "AUTO";
+type ChainState = { balance?: number|null; block?: number; slot?: number; error?: string; timestamp?: number };
 
 const checks = [
   ["Liquidity", "Pool depth and exit capacity"],
@@ -23,15 +24,30 @@ export default function Home() {
   const [maxTrade, setMaxTrade] = useState(100);
   const [maxDaily, setMaxDaily] = useState(500);
   const [slippage, setSlippage] = useState(5);
+  const [bnbAddress, setBnbAddress] = useState("");
+  const [solAddress, setSolAddress] = useState("");
+  const [bnb, setBnb] = useState<ChainState>({});
+  const [sol, setSol] = useState<ChainState>({});
 
   const status = useMemo(
-    () => risk === "CRITICAL" && !allowCritical
-      ? "RISK GATE"
-      : mode === "AUTO" ? "AUTO • POLICY ACTIVE"
-      : mode === "ASSISTED" ? "ASSISTED • CONFIRM"
-      : "PAPER • NO FUNDS",
-    [mode, risk, allowCritical]
+    () => mode === "AUTO" ? "AUTO • POLICY ACTIVE" : mode === "ASSISTED" ? "ASSISTED • CONFIRM" : "PAPER • NO FUNDS",
+    [mode]
   );
+
+  async function refresh() {
+    const [b, s] = await Promise.all([
+      fetch(`/api/onchain/bnb?address=${encodeURIComponent(bnbAddress)}`, { cache: "no-store" }).then(r=>r.json()).catch(()=>({error:"BNB RPC unavailable"})),
+      fetch(`/api/onchain/solana?address=${encodeURIComponent(solAddress)}`, { cache: "no-store" }).then(r=>r.json()).catch(()=>({error:"Solana RPC unavailable"})),
+    ]);
+    setBnb({ balance: b.nativeBalanceBNB, block: b.blockNumber, error: b.error, timestamp: b.timestamp });
+    setSol({ balance: s.nativeBalanceSOL, slot: s.slot, error: s.error, timestamp: s.timestamp });
+  }
+
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [bnbAddress, solAddress]);
 
   function scan() {
     setRisk(token.trim() ? "HIGH" : null);
@@ -47,7 +63,7 @@ export default function Home() {
       <div>
         <p className="eyebrow">BNB CHAIN · SOLANA · ROBINHOOD</p>
         <h1>One agent.<br/><em>Crypto, your way.</em></h1>
-        <p className="sub">Portfolio intelligence, token discovery and transaction preparation in one agent. Safety explains the risk; you decide how much risk to take.</p>
+        <p className="sub">Live onchain portfolio reads with configurable risk policy. Tarsius reads blockchain state directly; signing stays outside the AI model.</p>
       </div>
       <div className="panel">
         <div className="panel-title">Your policy</div>
@@ -60,23 +76,32 @@ export default function Home() {
 
     <section className="grid">
       <div className="card wide">
+        <div className="card-head"><h2>Live Portfolio</h2><span>ONCHAIN · 5s</span></div>
+        <div className="wallet-inputs">
+          <label>BNB address<input value={bnbAddress} onChange={e=>setBnbAddress(e.target.value)} placeholder="0x…" /></label>
+          <label>Solana address<input value={solAddress} onChange={e=>setSolAddress(e.target.value)} placeholder="Base58…" /></label>
+        </div>
+        <div className="chain-grid">
+          <div className="chain-live"><b>BNB Smart Chain</b><strong>{bnb.balance == null ? "—" : bnb.balance.toFixed(6)} BNB</strong><small>{bnb.block ? `Block ${bnb.block.toLocaleString()}` : bnb.error || "Reading RPC…"}</small></div>
+          <div className="chain-live"><b>Solana</b><strong>{sol.balance == null ? "—" : sol.balance.toFixed(6)} SOL</strong><small>{sol.slot ? `Slot ${sol.slot.toLocaleString()}` : sol.error || "Reading RPC…"}</small></div>
+        </div>
+        <p className="muted">Read-only for now. Values come from mainnet RPC; no transaction is signed or broadcast by this dashboard.</p>
+      </div>
+
+      <div className="card">
         <div className="card-head"><h2>Meme Scanner</h2><span>RISK INTELLIGENCE</span></div>
         <div className="scan">
           <input value={token} onChange={e=>setToken(e.target.value)} placeholder="Paste token address…" />
           <button onClick={scan}>Analyze</button>
         </div>
-        {risk && <div className="result"><div><b>RISK: {risk}</b><p>Risk indicators are informational. Tarsius does not promise protection from rugs or losses.</p></div><span className="risk">{risk}</span></div>}
+        {risk && <div className="result"><div><b>RISK: {risk}</b><p>Live contract/DEX checks are the next scanner layer. Risk indicators are not guarantees.</p></div><span className="risk">{risk}</span></div>}
         <div className="checks">{checks.map(([a,b])=><div key={a}><span>{a}</span><small>{b}</small></div>)}</div>
       </div>
 
       <div className="card">
         <div className="card-head"><h2>Sniper</h2><span>{mode}</span></div>
         <div className="seg">{(["PAPER","ASSISTED","AUTO"] as Mode[]).map(m=><button key={m} className={mode===m?"active":""} onClick={()=>setMode(m)}>{m}</button>)}</div>
-        <p className="muted">
-          {mode==="PAPER" ? "Detect → analyze → simulate → alert. No funds move." :
-           mode==="ASSISTED" ? "Detect → risk report → quote → simulate → you confirm." :
-           "Detect → policy check → quote → simulate → execute when policy permits."}
-        </p>
+        <p className="muted">{mode==="PAPER" ? "Detect → analyze → simulate → alert. No funds move." : mode==="ASSISTED" ? "Detect → risk report → quote → simulate → you confirm." : "Detect → policy check → quote → simulate → execute when policy permits."}</p>
         <button className="primary" onClick={()=>setApproval(true)}>Request action</button>
         {approval && <div className="approval"><b>Action review</b><p>{mode==="AUTO" ? "Auto mode uses your configured limits. The model still never receives private keys." : "Review the transaction before signing. The model proposes; your signer signs."}</p><button onClick={()=>setApproval(false)}>Close</button></div>}
       </div>
@@ -91,13 +116,13 @@ export default function Home() {
 
       <div className="card">
         <div className="card-head"><h2>Connections</h2><span>NON-CUSTODIAL</span></div>
-        <div className="conn"><b>BNB Chain</b><span>Not connected</span></div>
-        <div className="conn"><b>Solana</b><span>Not connected</span></div>
+        <div className="conn"><b>BNB Chain</b><span>RPC read-only</span></div>
+        <div className="conn"><b>Solana</b><span>RPC read-only</span></div>
         <div className="conn"><b>Robinhood</b><span>API connector</span></div>
         <p className="muted">Keys stay in the wallet, broker connector or secure signer — never in the AI prompt.</p>
       </div>
     </section>
 
-    <footer>v0.2 · Flexible safety · Paper-first · Risk indicators are not guarantees.</footer>
+    <footer>v0.3 · Live onchain reads · 5-second refresh · No transaction broadcast</footer>
   </main>;
 }
