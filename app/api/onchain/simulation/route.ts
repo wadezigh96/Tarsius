@@ -9,11 +9,6 @@ async function rpc(method:string,params:unknown[]){const r=await fetch(RPC,{meth
 function word(x:string,n:number){return "0x"+x.replace(/^0x/,"").slice(n*64,(n+1)*64);}
 function addr(a:string){return a.slice(2).toLowerCase().padStart(64,"0");}
 function u(x:string){return BigInt(x||"0x0");}
-function encodePath(path:string[]){return path.map(addr).join("");}
-async function quote(token:string,base:string,amount:string){
-  const data="0xd06ca61f"+addr(amount.startsWith("0x")?amount:"0x"+BigInt(amount).toString(16));
-  return data;
-}
 export async function GET(req:Request){
   const token=new URL(req.url).searchParams.get("address")||"";
   if(!EVM.test(token)) return NextResponse.json({valid:false,error:"BSC token address required"},{status:400});
