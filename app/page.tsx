@@ -31,6 +31,7 @@ export default function Home() {
   const [scanData, setScanData] = useState<any>(null);
   const [liquidity, setLiquidity] = useState<any>(null);
   const [scanLoading, setScanLoading] = useState(false);
+  const [paper, setPaper] = useState<any>({ candidates: [] });
 
   const status = useMemo(
     () => mode === "AUTO" ? "AUTO • POLICY ACTIVE" : mode === "ASSISTED" ? "ASSISTED • CONFIRM" : "PAPER • NO FUNDS",
@@ -51,6 +52,19 @@ export default function Home() {
     const timer = window.setInterval(refresh, 5000);
     return () => window.clearInterval(timer);
   }, [bnbAddress, solAddress]);
+
+  async function refreshPaper() {
+    try {
+      const r = await fetch("/api/sniper/paper", { cache: "no-store" });
+      setPaper(await r.json());
+    } catch { setPaper({ valid: false, candidates: [], error: "Paper feed unavailable" }); }
+  }
+
+  useEffect(() => {
+    refreshPaper();
+    const timer = window.setInterval(refreshPaper, 7000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function scan() {
     if (!token.trim()) { setRisk(null); setScanData(null); return; }
@@ -122,6 +136,14 @@ export default function Home() {
         <div className="card-head"><h2>Sniper</h2><span>{mode}</span></div>
         <div className="seg">{(["PAPER","ASSISTED","AUTO"] as Mode[]).map(m=><button key={m} className={mode===m?"active":""} onClick={()=>setMode(m)}>{m}</button>)}</div>
         <p className="muted">{mode==="PAPER" ? "Detect → analyze → simulate → alert. No funds move." : mode==="ASSISTED" ? "Detect → risk report → quote → simulate → you confirm." : "Detect → policy check → quote → simulate → execute when policy permits."}</p>
+        <div className="paper-feed">
+          <div className="paper-feed-head"><b>LIVE PAPER FEED</b><small>{paper.latestBlock ? `Block ${paper.latestBlock.toLocaleString()}` : paper.error || "Waiting…"}</small></div>
+          {(paper.candidates || []).slice(0,5).map((x:any)=><div className="paper-row" key={x.transactionHash+x.token}>
+            <div><b>{x.token?.slice(0,6)}…{x.token?.slice(-4)}</b><small>{x.token0===x.token ? "token0" : "token1"} • pair {x.pair?.slice(0,8)}…</small></div>
+            <span className={x.status==="ANALYZED"?"paper-ok":"paper-warn"}>{x.status}</span>
+          </div>)}
+          {!paper.error && !(paper.candidates||[]).length && <small>No new WBNB/USDT pairs in the latest 120 blocks.</small>}
+        </div>
         <button className="primary" onClick={()=>setApproval(true)}>Request action</button>
         {approval && <div className="approval"><b>Action review</b><p>{mode==="AUTO" ? "Auto mode uses your configured limits. The model still never receives private keys." : "Review the transaction before signing. The model proposes; your signer signs."}</p><button onClick={()=>setApproval(false)}>Close</button></div>}
       </div>
