@@ -32,6 +32,7 @@ export default function Home() {
   const [liquidity, setLiquidity] = useState<any>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [paper, setPaper] = useState<any>({ candidates: [] });
+  const [simulation, setSimulation] = useState<any>(null);
 
   const status = useMemo(
     () => mode === "AUTO" ? "AUTO • POLICY ACTIVE" : mode === "ASSISTED" ? "ASSISTED • CONFIRM" : "PAPER • NO FUNDS",
@@ -78,6 +79,9 @@ export default function Home() {
       const liq = await liquidityResponse.json();
       setScanData(data);
       setLiquidity(liq);
+      if (data.chain === "bsc" && data.valid) {
+        fetch(`/api/onchain/simulation?address=${encodeURIComponent(token.trim())}`, { cache:"no-store" }).then(r=>r.json()).then(setSimulation).catch(()=>setSimulation(null));
+      } else setSimulation(null);
       if (!data.valid) setRisk("CRITICAL");
       else if (liq.valid && liq.estimatedLiquidityUsd < 25000) setRisk("HIGH");
       else if (data.chain === "solana" && (data.freezeAuthority || data.mintAuthority)) setRisk("HIGH");
@@ -134,6 +138,7 @@ export default function Home() {
 
       <div className="card">
         <div className="card-head"><h2>Sniper</h2><span>{mode}</span></div>
+        {simulation && <div className="paper-feed"><div className="paper-feed-head"><b>SELL CHECK</b><small>read-only quote simulation</small></div><div className="paper-row"><span>Buy route</span><b>{simulation.buyQuoteAvailable ? "QUOTE OK" : "NO QUOTE"}</b></div><div className="paper-row"><span>Sell route</span><b>{simulation.sellQuoteAvailable ? "QUOTE OK" : "NO QUOTE"}</b></div></div>}
         <div className="seg">{(["PAPER","ASSISTED","AUTO"] as Mode[]).map(m=><button key={m} className={mode===m?"active":""} onClick={()=>setMode(m)}>{m}</button>)}</div>
         <p className="muted">{mode==="PAPER" ? "Detect → analyze → simulate → alert. No funds move." : mode==="ASSISTED" ? "Detect → risk report → quote → simulate → you confirm." : "Detect → policy check → quote → simulate → execute when policy permits."}</p>
         <div className="paper-feed">
